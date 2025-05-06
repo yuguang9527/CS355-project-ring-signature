@@ -10,6 +10,18 @@ Please look for the `unimplemented!()` snippets for where to write your solution
 
 Please refer to the Project spec for instructions on how to genreate an RSA keypair, compile the circuits, and generate and verify the SNARK proof. 
 
+## Testing
+
+Run all tests using
+```bash
+cargo test --release
+```
+
+or a specifc test e.g.,
+```bash
+cargo test --release test_compute_padded_hash
+```
+
 ## Bulletin Board
 
 Test your code using our [live bulletin board](https://web.stanford.edu/class/cs355/)!
