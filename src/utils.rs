@@ -18,19 +18,19 @@ pub fn verify_ring_signature_proof_public_inputs(
     // Convert expected inputs to RSAPubkey objects
     let mut pubkeys = Vec::new();
     for base64_str in expected_keys {
-        let pubkey = RSAPubkey::from_base64(&base64_str);
+        let pubkey = RSAPubkey::from_base64(base64_str);
         pubkeys.push(pubkey);
     }
     if pubkeys.len() > max_num_public_keys {
         return false; // Too many public keys
     }
 
-    return verify_ring_signature_proof_public_inputs_fields(
+    verify_ring_signature_proof_public_inputs_fields(
         proof,
         max_num_public_keys,
         &expected_message_field_elements,
         &pubkeys,
-    );
+    )
 }
 
 pub fn verify_ring_signature_proof_public_inputs_fields(
@@ -42,7 +42,7 @@ pub fn verify_ring_signature_proof_public_inputs_fields(
     let mut input_index = 0;
 
     // Generate the padded hash of the message
-    let message_hash = compute_hash(&expected_message);
+    let message_hash = compute_hash(expected_message);
     let padded_hash = compute_padded_hash(&message_hash);
 
     // Verify the expected padded message hash
@@ -75,7 +75,7 @@ pub fn verify_ring_signature_proof_public_inputs_fields(
     let remaining_pubkey_inputs = (max_num_public_keys - expected_keys.len()) * 64;
     for _ in 0..remaining_pubkey_inputs {
         if input_index >= proof.public_inputs.len()
-            || proof.public_inputs[input_index] != F::from_canonical_u32(0 as u32)
+            || proof.public_inputs[input_index] != F::from_canonical_u32(0_u32)
         {
             return false;
         }
@@ -83,5 +83,5 @@ pub fn verify_ring_signature_proof_public_inputs_fields(
     }
 
     // Ensure we checked all the inputs
-    return proof.public_inputs.len() == input_index;
+    proof.public_inputs.len() == input_index
 }

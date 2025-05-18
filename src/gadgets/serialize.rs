@@ -159,9 +159,8 @@ pub mod serialize_circuit_data {
         let bytes = BASE64_STANDARD
             .decode(base64_str)
             .map_err(|_| serde::de::Error::custom("Failed to base64 to bytes for circuit"))?;
-        let circuit_data =
-            CircuitData::<F, C, D>::from_bytes(&bytes, &RSAGateSerializer, &RSAGeneratorSerializer)
-                .map_err(|_| serde::de::Error::custom("Failed to convert bytes to CircuitData"));
-        circuit_data
+        
+        CircuitData::<F, C, D>::from_bytes(&bytes, &RSAGateSerializer, &RSAGeneratorSerializer)
+                .map_err(|_| serde::de::Error::custom("Failed to convert bytes to CircuitData"))
     }
 }

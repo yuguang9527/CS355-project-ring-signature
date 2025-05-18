@@ -24,6 +24,12 @@ pub struct RSADigest {
     pub val: BigUint,
 }
 
+impl Default for RSAKeypair {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RSAKeypair {
     // Since WASM has 32-bit words, to properly compile this we need separate cases
     #[cfg(target_pointer_width = "32")]
@@ -59,11 +65,11 @@ impl RSAKeypair {
             let q_crypto = crypto_primes::generate_prime::<U1024>(1024);
             p = Self::crypto_bigint_to_bigint(p_crypto);
             q = Self::crypto_bigint_to_bigint(q_crypto);
-            good_primes_found = (&p % (CONSTANT_EXP as u32) != BigUint::new(vec![1]))
-                && (&q % (CONSTANT_EXP as u32) != BigUint::new(vec![1]));
+            good_primes_found = (&p % { CONSTANT_EXP } != BigUint::new(vec![1]))
+                && (&q % { CONSTANT_EXP } != BigUint::new(vec![1]));
         }
         let n = &p * &q;
-        let order: BigUint = (&p - (1 as u32)) * (&q - (1 as u32));
+        let order: BigUint = (&p - 1_u32) * (&q - 1_u32);
         let sk = BigUint::new(vec![CONSTANT_EXP]).modinv(&order).unwrap();
         Self { n, sk }
     }

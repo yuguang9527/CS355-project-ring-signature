@@ -57,8 +57,25 @@ fn pow_65537(
     modulus: &BigUintTarget,
 ) -> BigUintTarget {
     // TODO: Implement the circuit to raise value to the power 65537 mod modulus 
-    unimplemented!("TODO: Implement the circuit to raise value to the power 65537 mod modulus");
+    // unimplemented!("TODO: Implement the circuit to raise value to the power 65537 mod modulus");
     // HINT: 65537 = 2^16 + 1. Can you use this to exponentiate efficiently?
+    let mut current_power = value.clone();
+
+    // Compute value^(2^16) mod modulus
+    // This is done by squaring 16 times, taking modulo at each step.
+    for _ in 0..16 {
+        let squared = builder.mul_biguint(&current_power, &current_power);
+        current_power = builder.rem_biguint(&squared, modulus);
+    }
+
+    // Now current_power holds value^(2^16) mod modulus.
+    // We need to multiply by the original value one more time and take modulo.
+    // result = (value^(2^16) * value) mod modulus
+    let final_product = builder.mul_biguint(&current_power, value);
+    
+
+    builder.rem_biguint(&final_product, modulus)
+
 }
 
 /// Circuit which computes a hash target from a message
@@ -93,8 +110,51 @@ pub fn compute_hash(message: &[GoldilocksField]) -> BigUint {
 /// Padding will look like: 0x00 || 0x01 || 0xff...ff || 0x00 || hash
 pub fn compute_padded_hash(message_hash: &BigUint) -> BigUint {
     // TODO: Compute the value of the padded hash for witness generation
-    unimplemented!("TODO: Compute the value of the padded hash for witness generation");
+    // unimplemented!("TODO: Compute the value of the padded hash for witness generation");
     // HINT: The size of the message hash is always HASH_BYTES
+    let raw_hash_bytes = message_hash.to_bytes_be();
+    let total_len = RSA_MODULUS_BYTES; // k, e.g., 256 bytes for 2048 bits
+    let t_len = HASH_BYTES; // Length of the hash T, e.g., 32 bytes for a 256-bit hash
+
+    // Minimum length of PS (padding string) is 8 bytes.
+    // EM = 0x00 || 0x01 || PS || 0x00 || T
+    // k = 1  +  1  + len(PS) + 1  + t_len
+    // k >= 1  +  1  + 8       + 1  + t_len = 11 + t_len
+    if total_len < t_len + 11 {
+        panic!(
+            "RSA modulus (k={} bytes) is too short for PKCS#1 v1.5 padding with a {}-byte hash (T). Minimum k should be t_len + 11 = {} bytes.",
+            total_len,
+            t_len,
+            t_len + 11
+        );
+    }
+    
+    // len(PS) = k - 3 - t_len
+    let ps_len = total_len - 3 - t_len;
+
+    // Construct T: the hash, left-padded with zeros to t_len if shorter.
+    let mut embedded_hash_t = vec![0u8; t_len];
+    if raw_hash_bytes.len() > t_len {
+        panic!(
+            "Input message_hash ({} bytes) is too large to be represented as a {}-byte hash (T). Expected HASH_BYTES.",
+            raw_hash_bytes.len(),
+            t_len
+        );
+    }
+    let hash_start_idx = t_len.saturating_sub(raw_hash_bytes.len());
+    embedded_hash_t[hash_start_idx..].copy_from_slice(&raw_hash_bytes);
+
+    // Construct the padded message EM = 0x00 || 0x01 || PS || 0x00 || T
+    let mut padded_em = Vec::with_capacity(total_len);
+    padded_em.push(0x00);                         // Octet 0x00
+    padded_em.push(0x01);                         // Block type 0x01 (for private-key operation)
+    padded_em.extend(vec![0xFF; ps_len]);         // PS (padding string of 0xFF octets)
+    padded_em.push(0x00);                         // Separator 0x00
+    padded_em.extend_from_slice(&embedded_hash_t); // T (message digest)
+
+    assert_eq!(padded_em.len(), total_len, "Internal error: Final padded EM length does not match RSA_MODULUS_BYTES.");
+
+    BigUint::from_bytes_be(&padded_em)
 }
 
 pub fn create_ring_circuit(max_num_pks: usize) -> RingSignatureCircuit {
@@ -115,20 +175,58 @@ pub fn create_ring_circuit(max_num_pks: usize) -> RingSignatureCircuit {
     builder.connect(modulus_is_zero.target, zero);
 
     // TODO: Add additional targets for the signature and public keys
-    unimplemented!("TODO: Add additional targets for the signature and public keys");
+    // unimplemented!("TODO: Add additional targets for the signature and public keys");
+
+    // Define pk_targets: a vector of public_input targets, one for each public key (N) in the ring R.
+    let mut pk_targets_vec = Vec::with_capacity(max_num_pks);
+    for _ in 0..max_num_pks {
+        pk_targets_vec.push(builder.add_virtual_public_biguint_target(64));
+    }
+    let pk_targets = pk_targets_vec;
+
+    // Define sig_target: a witness (private_input) target for the RSA signature rho.
+    let sig_target = builder.add_virtual_biguint_target(64);
+    
 
     // TODO: Construct SNARK circuit for relation R 
-    unimplemented!("TODO: Build SNARK circuit for relation R");
+    // Relation R: pk_witness ∈ pk_ring AND Vrfy(pk_witness, message_padded_hash, signature) == 1
+
+    // 1. Membership check: pk_witness (sig_pk_target) ∈ pk_ring (pk_targets)
+    //    is_member_flag = (sig_pk_target == pk_targets[0]) OR (sig_pk_target == pk_targets[1]) OR ...
+    let mut is_member_flag = builder.constant_bool(false); // Initialize to false
+    for pk_in_ring in pk_targets.iter() {
+        let current_pk_matches_witness = builder.eq_biguint(&sig_pk_target, pk_in_ring);
+        is_member_flag = builder.or(is_member_flag, current_pk_matches_witness);
+    }
+    // Now, is_member_flag.target is 1 if sig_pk_target is in pk_targets, and 0 otherwise.
+
+    // 2. RSA Signature Verification: PaddedHash == Signature^e mod N_witness
+    //    PaddedHash is padded_hash_target
+    //    Signature is sig_target
+    //    N_witness is sig_pk_target (the modulus of the actual signer)
+    //    e is 65537
+    let sig_pow_e = pow_65537(&mut builder, &sig_target, &sig_pk_target);
+    let rsa_verifies = builder.eq_biguint(&padded_hash_target, &sig_pow_e);
+    // Now, rsa_verifies.target is 1 if the RSA signature is valid, and 0 otherwise.
+
+    // 3. Combine both conditions: is_member AND rsa_verifies must be true.
+    let overall_condition = builder.and(is_member_flag, rsa_verifies);
+
+    // 4. Connect the overall condition to true (i.e., assert it must be 1).
+    let true_target = builder.one(); // Target representing true (1)
+    builder.connect(overall_condition.target, true_target);
+
+    // unimplemented!("TODO: Build SNARK circuit for relation R");
 
     // Build the circuit and return it
     let data = builder.build::<C>();
-    return RingSignatureCircuit {
+    RingSignatureCircuit {
         circuit: data,
         padded_hash_target,
         pk_targets,
         sig_target,
         sig_pk_target,
-    };
+    }
 }
 
 /// Creates a ring signature proof where the signer proves they know a valid signature
@@ -141,10 +239,10 @@ pub fn create_ring_proof(
 ) -> anyhow::Result<ProofWithPublicInputs<F, C, D>> {
     // Generate the values of the witness, by computing the RSA signature on
     // the message
-    let message_hash = compute_hash(&message);
+    let message_hash = compute_hash(message);
     let padded_hash = compute_padded_hash(&message_hash);
     let digest = RSADigest {
-        val: padded_hash.clone(),
+        val: padded_hash.clone(), // padded_hash is m in Sig.Vrfy(pk, m, rho)
     };
     let sig_val = private_key.sign(&digest);
     let pk_val = private_key.get_pubkey();
@@ -152,10 +250,33 @@ pub fn create_ring_proof(
     let mut pw = PartialWitness::new();
 
     // Set the witness values in pw
+
+    // 1. Set actual signer's public key (N_i from witness)
     pw.set_biguint_target(&circuit.sig_pk_target, &pk_val.n)?;
 
     // TODO: Set your additional targets in the partial witness
-    unimplemented!("TODO: Set your additional targets in the partial witness");
+    // unimplemented!("TODO: Set your additional targets in the partial witness");
+
+    // 2. Set padded hash of the message (m - public input, but set via witness pathway for prover)
+    pw.set_biguint_target(&circuit.padded_hash_target, &padded_hash)?;
+
+    // 3. Set the ring public keys (R - public input, but set via witness pathway for prover)
+    // Ensure the number of provided public keys matches the circuit's expectation.
+    if public_keys.len() != circuit.pk_targets.len() {
+        anyhow::bail!(
+            "Number of public keys ({}) provided does not match circuit configuration ({} targets).",
+            public_keys.len(),
+            circuit.pk_targets.len()
+        );
+    }
+    for (pk_target_in_circuit, actual_pk_value) in circuit.pk_targets.iter().zip(public_keys.iter()) {
+        pw.set_biguint_target(pk_target_in_circuit, &actual_pk_value.n)?;
+    }
+
+    // 4. Set the RSA signature (rho - witness)
+    pw.set_biguint_target(&circuit.sig_target, &sig_val.sig)?;
+
+    // All witness and public inputs required by the prover have been set.
 
     let proof = circuit.circuit.prove(pw)?;
     // check that the proof verifies
@@ -232,4 +353,3 @@ mod test {
         circuit.circuit.verify(proof).unwrap();
     }
 }
-
